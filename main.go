@@ -5,11 +5,23 @@ import (
 	"net/http"
 )
 
+func healthHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(http.StatusText(http.StatusOK)))
+}
+
 func main() {
+	filepathRoot := "."
+	port := "8080"
+
 	mux := http.NewServeMux()
+	mux.Handle("/app/", http.StripPrefix("/app", http.FileServer(http.Dir(filepathRoot))))
+
+	mux.HandleFunc("/healthz", healthHandler)
 
 	server := http.Server{
-		Addr:    ":8080",
+		Addr:    ":" + port,
 		Handler: mux,
 	}
 	err := server.ListenAndServe()
@@ -17,6 +29,6 @@ func main() {
 		return
 	}
 
-	fmt.Println("Server started at port 8080")
+	fmt.Printf("Server started at port %s", port)
 
 }
