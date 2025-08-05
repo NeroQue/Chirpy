@@ -15,6 +15,7 @@ import (
 type apiConfig struct {
 	fileserverHits atomic.Int32
 	dbQueries      *database.Queries
+	platform       string
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -36,18 +37,12 @@ func (cfg *apiConfig) hitHadler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(fmt.Sprintf("<html>\n  <body>\n    <h1>Welcome, Chirpy Admin</h1>\n    <p>Chirpy has been visited %d times!</p>\n  </body>\n</html>", cfg.fileserverHits.Load())))
 }
 
-func (cfg *apiConfig) resetHitsHandler(w http.ResponseWriter, r *http.Request) {
-	cfg.fileserverHits.Store(0)
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("Hits reset"))
-}
-
 func main() {
 	godotenv.Load()
 	filepathRoot := "."
 	port := "8080"
 	dbURL := os.Getenv("DB_URL")
+	platform := os.Getenv("PLATFORM")
 	if dbURL == "" {
 		log.Fatal("DB_URL is not set")
 	}
@@ -59,6 +54,7 @@ func main() {
 	cfg := apiConfig{
 		fileserverHits: atomic.Int32{},
 		dbQueries:      dbQueries,
+		platform:       platform,
 	}
 
 	mux := http.NewServeMux()
@@ -71,6 +67,8 @@ func main() {
 	mux.HandleFunc("POST /admin/reset", cfg.resetHitsHandler)
 
 	mux.HandleFunc("POST /api/validate_chirp", HandlerValidateChirps)
+
+	mux.HandleFunc("POST /api/users", cfg.UserHandler)
 
 	server := http.Server{
 		Addr:    ":" + port,
