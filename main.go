@@ -3,39 +3,17 @@ package main
 import (
 	"database/sql"
 	"fmt"
-	"github.com/NEROQUE/Chirpy/internal/database"
-	"github.com/joho/godotenv"
-	_ "github.com/lib/pq"
 	"log"
 	"net/http"
 	"os"
 	"sync/atomic"
+
+	"github.com/NEROQUE/Chirpy/handlers"
+	"github.com/NEROQUE/Chirpy/internal/database"
+	"github.com/NEROQUE/Chirpy/middleware"
+	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
 )
-
-type apiConfig struct {
-	fileserverHits atomic.Int32
-	dbQueries      *database.Queries
-	platform       string
-}
-
-func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cfg.fileserverHits.Add(1)
-		next.ServeHTTP(w, r)
-	})
-}
-
-func healthHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(http.StatusText(http.StatusOK)))
-}
-
-func (cfg *apiConfig) hitHadler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(fmt.Sprintf("<html>\n  <body>\n    <h1>Welcome, Chirpy Admin</h1>\n    <p>Chirpy has been visited %d times!</p>\n  </body>\n</html>", cfg.fileserverHits.Load())))
-}
 
 func main() {
 	godotenv.Load()
@@ -46,39 +24,42 @@ func main() {
 	if dbURL == "" {
 		log.Fatal("DB_URL is not set")
 	}
+
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
 		log.Fatalf("Error opening database: %s", err)
 	}
 	dbQueries := database.New(db)
-	cfg := apiConfig{
-		fileserverHits: atomic.Int32{},
-		dbQueries:      dbQueries,
-		platform:       platform,
+
+	hits := &atomic.Int32{}
+
+	adminCfg := &handlers.AdminConfig{
+		FileserverHits: hits,
+		DbQueries:      dbQueries,
+		Platform:       platform,
 	}
 
+	metricsMiddleware := middleware.MetricsMiddleware(hits)
+
 	mux := http.NewServeMux()
-	mux.Handle("/app/", http.StripPrefix("/app", cfg.middlewareMetricsInc(http.FileServer(http.Dir(filepathRoot)))))
 
-	mux.HandleFunc("GET /api/healthz", healthHandler)
+	mux.Handle("/app/", http.StripPrefix("/app", metricsMiddleware(http.FileServer(http.Dir(filepathRoot)))))
 
-	mux.HandleFunc("GET /admin/metrics", cfg.hitHadler)
+	mux.HandleFunc("GET /api/healthz", handlers.Health)
+	mux.HandleFunc("POST /api/validate_chirp", handlers.ValidateChirp)
+	mux.HandleFunc("POST /api/users", adminCfg.UserHandler)
 
-	mux.HandleFunc("POST /admin/reset", cfg.resetHitsHandler)
-
-	mux.HandleFunc("POST /api/validate_chirp", HandlerValidateChirps)
-
-	mux.HandleFunc("POST /api/users", cfg.UserHandler)
+	mux.HandleFunc("GET /admin/metrics", adminCfg.HitHandler)
+	mux.HandleFunc("POST /admin/reset", adminCfg.ResetHitsHandler)
 
 	server := http.Server{
 		Addr:    ":" + port,
 		Handler: mux,
 	}
+
+	fmt.Printf("Server starting at port %s\n", port)
 	err = server.ListenAndServe()
 	if err != nil {
-		return
+		log.Fatalf("Server error: %s", err)
 	}
-
-	fmt.Printf("Server started at port %s", port)
-
 }
