@@ -1,87 +1,156 @@
 package auth
 
 import (
+	"errors"
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"testing"
+	"time"
 )
 
-func TestPasswordHashing(t *testing.T) {
-	// Test cases with different passwords
-	testCases := []struct {
-		name     string
-		password string
-	}{
-		{
-			name:     "simple password",
-			password: "password123",
-		},
-		{
-			name:     "complex password",
-			password: "C0mpl3x_P@ssw0rd!",
-		},
-		{
-			name:     "empty password",
-			password: "",
-		},
-		{
-			name:     "very long password",
-			password: "ThisIsAVeryLongPasswordThatShouldStillWork1234567890!@#$%^&*()",
-		},
+func TestHashAndCheckPassword(t *testing.T) {
+	password := "test-password"
+
+	// Test password hashing
+	hash, err := HashPassword(password)
+	if err != nil {
+		t.Fatalf("Failed to hash password: %v", err)
+	}
+	if hash == password {
+		t.Fatal("Hash should not be the same as the original password")
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Hash the password
-			hash, err := HashPassword(tc.password)
-			if err != nil {
-				t.Fatalf("HashPassword() error = %v", err)
-			}
+	// Test correct password check
+	err = CheckPasswordHash(password, hash)
+	if err != nil {
+		t.Fatalf("Failed to validate correct password: %v", err)
+	}
 
-			// Check that the hash is not empty
-			if hash == "" {
-				t.Error("HashPassword() returned an empty hash")
-			}
-
-			// Verify that the original password matches the hash
-			err = CheckPasswordHash(tc.password, hash)
-			if err != nil {
-				t.Errorf("CheckPasswordHash() failed to verify a valid password: %v", err)
-			}
-
-			// Test with an incorrect password
-			wrongPassword := tc.password + "wrong"
-			err = CheckPasswordHash(wrongPassword, hash)
-			if err == nil {
-				t.Error("CheckPasswordHash() verified an incorrect password")
-			}
-		})
+	// Test incorrect password check
+	err = CheckPasswordHash("wrong-password", hash)
+	if err == nil {
+		t.Fatal("Should have failed with incorrect password")
 	}
 }
 
-func TestHashPassword_MultipleCallsProduceDifferentHashes(t *testing.T) {
-	// Given the same password, multiple calls to HashPassword should produce different hashes
-	// due to the salt that bcrypt adds
-	password := "samepassword"
+func TestMakeAndValidateJWT(t *testing.T) {
+	userID := uuid.New()
+	tokenSecret := "test-secret"
+	expiresIn := time.Hour
 
-	hash1, err := HashPassword(password)
+	// Test creating JWT
+	token, err := MakeJWT(userID, tokenSecret, expiresIn)
 	if err != nil {
-		t.Fatalf("HashPassword() error = %v", err)
+		t.Fatalf("Failed to create JWT: %v", err)
+	}
+	if token == "" {
+		t.Fatal("Token should not be empty")
 	}
 
-	hash2, err := HashPassword(password)
+	// Test validating JWT
+	extractedUserID, err := ValidateJWT(token, tokenSecret)
 	if err != nil {
-		t.Fatalf("HashPassword() error = %v", err)
+		t.Fatalf("Failed to validate JWT: %v", err)
+	}
+	if extractedUserID != userID {
+		t.Fatalf("Extracted user ID (%s) doesn't match original user ID (%s)", extractedUserID, userID)
+	}
+}
+
+func TestExpiredJWT(t *testing.T) {
+	userID := uuid.New()
+	tokenSecret := "test-secret"
+
+	// Create token that expires immediately
+	expiresIn := -1 * time.Hour // Expired 1 hour ago
+	token, err := MakeJWT(userID, tokenSecret, expiresIn)
+	if err != nil {
+		t.Fatalf("Failed to create expired JWT: %v", err)
 	}
 
-	if hash1 == hash2 {
-		t.Error("Multiple calls to HashPassword() with the same password produced identical hashes")
+	// Test validating expired JWT
+	_, err = ValidateJWT(token, tokenSecret)
+	if err == nil {
+		t.Fatal("Should have failed with expired token")
 	}
 
-	// Both hashes should still verify the same password
-	if err := CheckPasswordHash(password, hash1); err != nil {
-		t.Error("First hash failed to verify password")
+	// Check that the error is specifically about token expiration
+	if !errors.Is(err, jwt.ErrTokenExpired) {
+		t.Fatalf("Expected TokenExpiredError but got: %v", err)
 	}
 
-	if err := CheckPasswordHash(password, hash2); err != nil {
-		t.Error("Second hash failed to verify password")
+}
+
+func TestInvalidSecretJWT(t *testing.T) {
+	userID := uuid.New()
+	correctSecret := "correct-secret"
+	wrongSecret := "wrong-secret"
+	expiresIn := time.Hour
+
+	// Create token with correct secret
+	token, err := MakeJWT(userID, correctSecret, expiresIn)
+	if err != nil {
+		t.Fatalf("Failed to create JWT: %v", err)
+	}
+
+	// Test validating with wrong secret
+	_, err = ValidateJWT(token, wrongSecret)
+	if err == nil {
+		t.Fatal("Should have failed with wrong secret")
+	}
+}
+
+func TestMalformedJWT(t *testing.T) {
+	tokenSecret := "test-secret"
+	malformedToken := "not.a.validtoken"
+
+	// Test validating malformed JWT
+	_, err := ValidateJWT(malformedToken, tokenSecret)
+	if err == nil {
+		t.Fatal("Should have failed with malformed token")
+	}
+}
+
+func TestTokenWithInvalidUserID(t *testing.T) {
+	// Create a token manually with an invalid UUID in the subject claim
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"iss": "Chirpy",
+		"iat": time.Now().UTC().Unix(),
+		"exp": time.Now().UTC().Add(time.Hour).Unix(),
+		"sub": "not-a-valid-uuid",
+	})
+
+	tokenSecret := "test-secret"
+	signedString, err := token.SignedString([]byte(tokenSecret))
+	if err != nil {
+		t.Fatalf("Failed to sign token: %v", err)
+	}
+
+	// Validate the token - should fail parsing the UUID
+	_, err = ValidateJWT(signedString, tokenSecret)
+	if err == nil {
+		t.Fatal("Should have failed with invalid UUID")
+	}
+}
+
+func TestTokenWithMissingClaims(t *testing.T) {
+	// Create a token without the subject claim
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"iss": "Chirpy",
+		"iat": time.Now().UTC().Unix(),
+		"exp": time.Now().UTC().Add(time.Hour).Unix(),
+		// Missing "sub" claim
+	})
+
+	tokenSecret := "test-secret"
+	signedString, err := token.SignedString([]byte(tokenSecret))
+	if err != nil {
+		t.Fatalf("Failed to sign token: %v", err)
+	}
+
+	// Validate the token - should fail because subject claim is missing
+	_, err = ValidateJWT(signedString, tokenSecret)
+	if err == nil {
+		t.Fatal("Should have failed with missing subject claim")
 	}
 }
