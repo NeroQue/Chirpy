@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"encoding/json"
+	"github.com/NEROQUE/Chirpy/internal/auth"
+	"github.com/NEROQUE/Chirpy/internal/database"
 	"net/http"
 	"time"
 
@@ -17,7 +19,8 @@ type User struct {
 
 func (cfg *AdminConfig) UserHandler(w http.ResponseWriter, r *http.Request) {
 	type parameters struct {
-		Email string `json:"email"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
 	}
 	type response struct {
 		User
@@ -30,7 +33,15 @@ func (cfg *AdminConfig) UserHandler(w http.ResponseWriter, r *http.Request) {
 		RespondWithError(w, http.StatusBadRequest, "Invalid request payload")
 		return
 	}
-	user, err := cfg.DbQueries.CreateUser(r.Context(), params.Email)
+	hashedPassword, err := auth.HashPassword(params.Password)
+	if err != nil {
+		RespondWithError(w, http.StatusInternalServerError, "Failed to hash password")
+		return
+	}
+	user, err := cfg.DbQueries.CreateUser(r.Context(), database.CreateUserParams{
+		Email:          params.Email,
+		HashedPassword: hashedPassword,
+	})
 	if err != nil {
 		RespondWithError(w, http.StatusInternalServerError, "Failed to create user")
 		return
