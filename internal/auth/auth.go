@@ -1,11 +1,15 @@
 package auth
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
+	"net/http"
+	"strings"
 	"time"
 )
 
@@ -71,4 +75,30 @@ func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
 		return uuid.Nil, fmt.Errorf("invalid user ID: %w", err)
 	}
 	return id, nil
+}
+
+func GetBearerToken(headers http.Header) (string, error) {
+	authHeader := headers.Get("Authorization")
+	if authHeader == "" {
+		return "", errors.New("no Authorization header found")
+	}
+	token, ok := strings.CutPrefix(authHeader, "Bearer")
+	if !ok {
+		return "", errors.New("invalid Authorization header")
+	}
+	tokenTrimmed := strings.TrimSpace(token)
+	if tokenTrimmed == "" {
+		return "", errors.New("empty token")
+	}
+	return tokenTrimmed, nil
+}
+
+func MakeRefreshToken() (string, error) {
+	token := make([]byte, 32)
+	_, err := rand.Read(token)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate random token: %w", err)
+	}
+	hexEncodedToken := hex.EncodeToString(token)
+	return hexEncodedToken, nil
 }

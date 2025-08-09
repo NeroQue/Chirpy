@@ -19,3 +19,10 @@ order by created_at;
 Select * from chirps
 where id = $1;
 --
+
+-- name: DeleteChirp :one
+DELETE
+FROM chirps
+WHERE id = $1
+RETURNING *;
+--

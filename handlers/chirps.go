@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
+	"github.com/NEROQUE/Chirpy/internal/auth"
 	"github.com/NEROQUE/Chirpy/internal/database"
 	"github.com/google/uuid"
 	"net/http"
@@ -36,32 +38,42 @@ func ProfaneReplace(s string) string {
 
 func (cfg *AdminConfig) HandleCreateChirps(w http.ResponseWriter, r *http.Request) {
 	type parameters struct {
-		Body   string    `json:"body"`
-		UserID uuid.UUID `json:"user_id"`
+		Body string `json:"body"`
 	}
 
 	type response struct {
 		Chirp
 	}
 
+	token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		RespondWithError(w, http.StatusUnauthorized, "Unauthorized", err)
+		return
+	}
+	userID, err := auth.ValidateJWT(token, cfg.Secret)
+	if err != nil {
+		RespondWithError(w, http.StatusUnauthorized, "Unauthorized", err)
+		return
+	}
+
 	decoder := json.NewDecoder(r.Body)
 	params := parameters{}
-	err := decoder.Decode(&params)
+	err = decoder.Decode(&params)
 	if err != nil {
-		RespondWithError(w, http.StatusBadRequest, "Invalid request payload")
+		RespondWithError(w, http.StatusBadRequest, "Invalid request payload", err)
 		return
 	}
 	if len(params.Body) > 140 {
-		RespondWithError(w, http.StatusBadRequest, "Chirp is too long")
+		RespondWithError(w, http.StatusBadRequest, "Chirp is too long", err)
 		return
 	}
 	params.Body = ProfaneReplace(params.Body)
 	chirp, err := cfg.DbQueries.CreateChirp(r.Context(), database.CreateChirpParams{
 		Body:   params.Body,
-		UserID: params.UserID,
+		UserID: userID,
 	})
 	if err != nil {
-		RespondWithError(w, http.StatusInternalServerError, "Failed to create chirp")
+		RespondWithError(w, http.StatusInternalServerError, "Failed to create chirp", err)
 		return
 	}
 	resp := response{Chirp{
@@ -78,7 +90,7 @@ func (cfg *AdminConfig) HandleGetAllChirps(w http.ResponseWriter, r *http.Reques
 	var allChirps []Chirp
 	result, err := cfg.DbQueries.GetAllChirps(r.Context())
 	if err != nil {
-		RespondWithError(w, http.StatusInternalServerError, "Failed to get all chirps")
+		RespondWithError(w, http.StatusInternalServerError, "Failed to get all chirps", err)
 		return
 	}
 
@@ -98,13 +110,14 @@ func (cfg *AdminConfig) HandleGetAllChirps(w http.ResponseWriter, r *http.Reques
 func (cfg *AdminConfig) HandleGetChirp(w http.ResponseWriter, r *http.Request) {
 	chirpID := r.PathValue("chirpID")
 	if chirpID == "" {
-		RespondWithError(w, http.StatusBadRequest, "Please provide a chirpID")
+		err := errors.New("no chirpID provided")
+		RespondWithError(w, http.StatusBadRequest, "Please provide a chirpID", err)
 		return
 	}
 
 	result, err := cfg.DbQueries.GetChirp(r.Context(), uuid.MustParse(chirpID))
 	if err != nil {
-		RespondWithError(w, http.StatusNotFound, "Failed to get chirp")
+		RespondWithError(w, http.StatusNotFound, "Failed to get chirp", err)
 		return
 	}
 	chirp := Chirp{
@@ -116,4 +129,38 @@ func (cfg *AdminConfig) HandleGetChirp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	RespondWithJSON(w, http.StatusOK, chirp)
+}
+
+func (cfg *AdminConfig) HandleDeleteChirp(w http.ResponseWriter, r *http.Request) {
+
+	chirpID := r.PathValue("chirpID")
+	if chirpID == "" {
+		err := errors.New("no chirpID provided")
+		RespondWithError(w, http.StatusBadRequest, "Please provide a chirpID", err)
+		return
+	}
+	headers := r.Header
+	token, err := auth.GetBearerToken(headers)
+	if err != nil {
+		RespondWithError(w, http.StatusUnauthorized, "Unauthorized", err)
+	}
+	userID, err := auth.ValidateJWT(token, cfg.Secret)
+	if err != nil {
+		RespondWithError(w, http.StatusUnauthorized, "Unauthorized", err)
+	}
+	chirp, err := cfg.DbQueries.GetChirp(r.Context(), uuid.MustParse(chirpID))
+	if err != nil {
+		RespondWithError(w, http.StatusNotFound, "Failed to get chirp", err)
+		return
+	}
+	if chirp.UserID != userID {
+		RespondWithError(w, http.StatusForbidden, "Forbidden", err)
+		return
+	}
+	_, err = cfg.DbQueries.DeleteChirp(r.Context(), uuid.MustParse(chirpID))
+	if err != nil {
+		RespondWithError(w, http.StatusNotFound, "Failed to delete chirp, not found", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -13,6 +14,7 @@ type AdminConfig struct {
 	FileserverHits *atomic.Int32
 	DbQueries      *database.Queries
 	Platform       string
+	Secret         string
 }
 
 func (cfg *AdminConfig) HitHandler(w http.ResponseWriter, r *http.Request) {
@@ -23,7 +25,8 @@ func (cfg *AdminConfig) HitHandler(w http.ResponseWriter, r *http.Request) {
 
 func (cfg *AdminConfig) ResetHitsHandler(w http.ResponseWriter, r *http.Request) {
 	if cfg.Platform != "dev" {
-		RespondWithError(w, http.StatusForbidden, "Forbidden")
+		err := errors.New("not in Dev Mode")
+		RespondWithError(w, http.StatusForbidden, "Forbidden", err)
 		return
 	}
 	err := cfg.DbQueries.DeleteAllUsers(r.Context())

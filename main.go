@@ -37,6 +37,7 @@ func main() {
 		FileserverHits: hits,
 		DbQueries:      dbQueries,
 		Platform:       platform,
+		Secret:         os.Getenv("SECRET"),
 	}
 
 	metricsMiddleware := middleware.MetricsMiddleware(hits)
@@ -46,14 +47,20 @@ func main() {
 	mux.Handle("/app/", http.StripPrefix("/app", metricsMiddleware(http.FileServer(http.Dir(filepathRoot)))))
 
 	mux.HandleFunc("GET /api/healthz", handlers.Health)
-	mux.HandleFunc("POST /api/users", adminCfg.UserHandler)
-	mux.HandleFunc("POST /api/chirps", adminCfg.HandleCreateChirps)
 	mux.HandleFunc("GET /api/chirps", adminCfg.HandleGetAllChirps)
 	mux.HandleFunc("GET /api/chirps/{chirpID}", adminCfg.HandleGetChirp)
+	mux.HandleFunc("POST /api/users", adminCfg.UserHandler)
+	mux.HandleFunc("POST /api/chirps", adminCfg.HandleCreateChirps)
 	mux.HandleFunc("POST /api/login", adminCfg.HandleLogin)
+	mux.HandleFunc("POST /api/refresh", adminCfg.HandleRefreshTokens)
+	mux.HandleFunc("POST /api/revoke", adminCfg.HandleRevokeRefreshToken)
+	mux.HandleFunc("PUT /api/users", adminCfg.UserUpdateHandler)
+	mux.HandleFunc("DELETE /api/chirps/{chirpID}", adminCfg.HandleDeleteChirp)
 
 	mux.HandleFunc("GET /admin/metrics", adminCfg.HitHandler)
 	mux.HandleFunc("POST /admin/reset", adminCfg.ResetHitsHandler)
+
+	mux.HandleFunc("POST /api/polka/webhooks", adminCfg.PolkaHandler)
 
 	server := http.Server{
 		Addr:    ":" + port,
